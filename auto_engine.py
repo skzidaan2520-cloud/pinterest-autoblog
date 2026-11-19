@@ -53,7 +53,7 @@ def verify_blogger_auth(blogger_token, client_id, client_secret, refresh_token, 
     return None
 
 def generate_content(gemini_key, topic, niche):
-    client = genai.Client(api_key=gemini_key, http_options={"timeout": 35000})
+    client = genai.Client(api_key=gemini_key, http_options={"timeout": 90000})
     prompt = f"""
     You are a viral Tier-1 (USA/UK) Pinterest & SEO Home Decor Blogger in the '{niche}' niche.
     Topic: "{topic}"
@@ -66,41 +66,52 @@ def generate_content(gemini_key, topic, niche):
     3. "intro_html": Engaging 2-paragraph HTML introduction (<p> tags only).
     4. "sections": A list of objects (one for each idea), each having:
        - "heading": Numbered section heading (e.g., "1. Boucle Corner Chair with a Clip-On Reading Lamp")
-       - "image_prompt": Detailed vertical interior design photography prompt (no text, no words, no watermarks) showing this exact cozy decor setup in warm natural sunlight, editorial magazine style.
-       - "body_html": 2 detailed, practical paragraphs in HTML (<p> and <ul>/<li> tags) explaining how renters can recreate this look on a budget.
-       - "pin_headline": Short, aesthetic 3 to 6 words Pinterest title (Title Case, NOT all caps, e.g., "The Coziest Corner" or "Cozy Bedroom Reading Nook").
-       - "pin_title": SEO Pinterest title (max 90 chars).
-       - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 300 chars).
+       - "image_prompt": Concise vertical interior design photography prompt (max 25 words, no text, no watermarks) showing this cozy decor setup in warm sunlight.
+       - "body_html": 2 concise, practical paragraphs in HTML (<p> tags) explaining how renters can recreate this look on a budget.
+       - "pin_headline": Short aesthetic 3 to 5 words Pinterest title (Title Case, NOT all caps, e.g., "The Coziest Corner").
+       - "pin_title": SEO Pinterest title (max 85 chars).
+       - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 250 chars).
     5. "conclusion_html": Short encouraging closing paragraph (<p> tag).
     """
 
     candidates = [
         "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-3.7-flash",
         "gemini-3.8-flash",
-        "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite"
     ]
 
-    for m_name in candidates:
-        try:
-            print(f"Trying model: {m_name}...", flush=True)
-            response = client.models.generate_content(
-                model=m_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.7
+    for attempt_round in range(2):
+        for m_name in candidates:
+            try:
+                print(f"Trying model: {m_name}...", flush=True)
+                try:
+                    cfg = types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.7,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0)
+                    )
+                except Exception:
+                    cfg = types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.7
+                    )
+
+                response = client.models.generate_content(
+                    model=m_name,
+                    contents=prompt,
+                    config=cfg
                 )
-            )
-            data = json.loads(response.text.strip())
-            print(f"Success with model: {m_name}", flush=True)
-            return data
-        except Exception as e:
-            print(f"Skipped {m_name}: {e}", flush=True)
-            time.sleep(1)
-            continue
+                data = json.loads(response.text.strip())
+                print(f"Success with model: {m_name}", flush=True)
+                return data
+            except Exception as e:
+                print(f"Skipped {m_name}: {e}", flush=True)
+                time.sleep(2)
+                continue
+        time.sleep(5)
 
     raise RuntimeError("All Gemini Flash models failed or returned invalid JSON.")
 
