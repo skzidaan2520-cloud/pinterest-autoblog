@@ -48,7 +48,25 @@ def generate_content(gemini_key, topic, niche):
        - "pin_title": SEO Pinterest title (max 90 chars).
        - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 300 chars).
     """
-    response = client.models.generate_content(model="gemini-3.0-flash", contents=prompt)
+
+    response = None
+    for m_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest"]:
+        try:
+            response = client.models.generate_content(model=m_name, contents=prompt)
+            print(f"Used model: {m_name}")
+            break
+        except Exception:
+            continue
+
+    if not response:
+        available = [
+            m.name.replace("models/", "")
+            for m in client.models.list()
+            if "generateContent" in (m.supported_actions or [])
+        ]
+        print(f"Auto-detected available models: {available}")
+        response = client.models.generate_content(model=available[0], contents=prompt)
+
     raw = response.text.strip()
     if raw.startswith("```json"):
         raw = raw[7:-3].strip()
