@@ -50,12 +50,14 @@ def generate_content(gemini_key, topic, niche):
     """
 
     response = None
-    for m_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest"]:
+    candidates = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+    for m_name in candidates:
         try:
             response = client.models.generate_content(model=m_name, contents=prompt)
             print(f"Used model: {m_name}")
             break
-        except Exception:
+        except Exception as e:
+            print(f"Skipped {m_name}: {e}")
             continue
 
     if not response:
