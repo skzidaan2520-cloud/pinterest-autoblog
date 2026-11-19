@@ -15,18 +15,42 @@ from google.auth.transport.requests import Request
 os.makedirs("pins", exist_ok=True)
 os.makedirs("blog_images", exist_ok=True)
 
-def get_next_topic():
+def peek_next_topic():
     if not os.path.exists("topics.txt"):
         return None
     with open("topics.txt", "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
-    if not lines:
-        return None
-    topic = lines[0]
+    return lines[0] if lines else None
+
+def remove_completed_topic(completed_topic):
+    if not os.path.exists("topics.txt"):
+        return
+    with open("topics.txt", "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    if lines and lines[0] == completed_topic:
+        lines = lines[1:]
     with open("topics.txt", "w", encoding="utf-8") as f:
-        for line in lines[1:]:
+        for line in lines:
             f.write(line + "\n")
-    return topic
+
+def verify_blogger_auth(blogger_token, client_id, client_secret, refresh_token, blog_id):
+    if not blog_id:
+        return None
+    if refresh_token and client_id and client_secret:
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token.strip(),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id.strip(),
+            client_secret=client_secret.strip(),
+            scopes=["https://www.googleapis.com/auth/blogger"]
+        )
+        creds.refresh(Request())
+        print("Blogger OAuth Credentials Verified Successfully!", flush=True)
+        return creds
+    elif blogger_token:
+        return Credentials(token=blogger_token.strip())
+    return None
 
 def generate_content(gemini_key, topic, niche):
     client = genai.Client(api_key=gemini_key, http_options={"timeout": 35000})
@@ -262,24 +286,9 @@ def build_blog_and_pins(data, slug, repo_owner, repo_name):
     html_parts.append(data.get("conclusion_html", ""))
     return "\n".join(html_parts), generated_pins
 
-def publish_blogger(blogger_token, client_id, client_secret, refresh_token, blog_id, title, html_content):
-    if not blog_id or (not blogger_token and not refresh_token):
+def publish_blogger(creds, blog_id, title, html_content):
+    if not blog_id or not creds:
         return f"https://demo-blog.blogspot.com/{int(time.time())}.html"
-
-    if refresh_token and client_id and client_secret:
-        creds = Credentials(
-            token=blogger_token or None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=["https://www.googleapis.com/auth/blogger"]
-        )
-        creds.refresh(Request())
-        print("Auto-refreshed permanent Blogger token!", flush=True)
-    else:
-        creds = Credentials(token=blogger_token)
-
     service = build("blogger", "v3", credentials=creds)
     body = {"kind": "blogger#post", "blog": {"id": blog_id}, "title": title, "content": html_content}
     post = service.posts().insert(blogId=blog_id, body=body, isDraft=False).execute()
@@ -390,14 +399,20 @@ if __name__ == "__main__":
     repo_name = "pinterest-autoblog"
 
     if gemini_key:
-        topic = get_next_topic()
+        topic = peek_next_topic()
         if topic:
+            # Step 1: Verify Blogger auth FIRST before spending time generating anything!
+            blogger_creds = verify_blogger_auth(blogger_token, client_id, client_secret, refresh_token, blog_id)
+
             print(f"Generating content for topic: {topic}", flush=True)
             data = generate_content(gemini_key, topic, niche)
             slug = f"post_{int(time.time())}"
             full_html, generated_pins = build_blog_and_pins(data, slug, repo_owner, repo_name)
-            blog_url = publish_blogger(blogger_token, client_id, client_secret, refresh_token, blog_id, data["blog_title"], full_html)
+            blog_url = publish_blogger(blogger_creds, blog_id, data["blog_title"], full_html)
             save_to_queue(generated_pins, blog_url, gap_hours)
+
+            # Remove topic ONLY after successful publish
+            remove_completed_topic(topic)
             print(f"Blog published & {len(generated_pins)} editorial pins queued: {blog_url}", flush=True)
         else:
             print("No new topics left in topics.txt", flush=True)
