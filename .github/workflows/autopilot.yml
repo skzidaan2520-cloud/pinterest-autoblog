@@ -1,0 +1,45 @@
+name: AutoBlog & Pinterest Drip Scheduler
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */2 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  run-autopilot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Libraries
+        run: |
+          pip install requests pillow google-genai google-api-python-client google-auth-oauthlib
+
+      - name: Run Automation Engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOGGER_TOKEN: ${{ secrets.BLOGGER_TOKEN }}
+          BLOG_ID: ${{ secrets.BLOG_ID }}
+          PINTEREST_TOKEN: ${{ secrets.PINTEREST_TOKEN }}
+          PINTEREST_BOARD_ID: ${{ secrets.PINTEREST_BOARD_ID }}
+          NICHE: "Apartment & Renter-Friendly Decor"
+          GAP_HOURS: "4"
+        run: |
+          python auto_engine.py
+
+      - name: Save Generated Pins & Dashboard
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Auto-update blog, pins & dashboard" || exit 0
+          git push
