@@ -61,17 +61,17 @@ def generate_content(gemini_key, topic, niche):
     Match the exact number of sections to the number mentioned in "{topic}" (if no number is mentioned, generate 10 sections).
 
     Return ONLY a valid JSON object with these exact keys:
-    1. "blog_title": Catchy SEO listicle title for USA audience.
-    2. "hero_image_prompt": Wide editorial interior photography prompt (no text, no words) capturing the overall aesthetic of '{topic}'.
-    3. "intro_html": Engaging 2-paragraph HTML introduction (<p> tags only).
-    4. "sections": A list of objects (one for each idea), each having:
-       - "heading": Numbered section heading (e.g., "1. Boucle Corner Chair with a Clip-On Reading Lamp")
-       - "image_prompt": Concise vertical interior design photography prompt (max 25 words, no text, no watermarks) showing this cozy decor setup in warm sunlight.
-       - "body_html": 2 concise, practical paragraphs in HTML (<p> tags) explaining how renters can recreate this look on a budget.
-       - "pin_headline": Short aesthetic 3 to 5 words Pinterest title (Title Case, NOT all caps, e.g., "The Coziest Corner").
-       - "pin_title": SEO Pinterest title (max 85 chars).
-       - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 250 chars).
-    5. "conclusion_html": Short encouraging closing paragraph (<p> tag).
+1. "blog_title": Catchy SEO listicle title for USA audience.
+2. "hero_image_prompt": Wide editorial interior photography prompt (no text, no words) capturing the overall aesthetic of '{topic}'.
+3. "intro_html": Engaging 2-paragraph HTML introduction (<p> tags only).
+4. "sections": A list of objects (one for each idea), each having:
+  - "heading": Numbered section heading (e.g., "1. Boucle Corner Chair with a Clip-On Reading Lamp")
+  - "image_prompt": Concise vertical interior design photography prompt (max 25 words, no text, no watermarks) showing this cozy decor setup in warm sunlight.
+  - "body_html": 2 concise, practical paragraphs in HTML (<p> tags) explaining how renters can recreate this look on a budget.
+  - "pin_headline": Short aesthetic 3 to 5 words Pinterest title (Title Case, NOT all caps, e.g., "The Coziest Corner").
+  - "pin_title": SEO Pinterest title (max 85 chars).
+  - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 250 chars).
+5. "conclusion_html": Short encouraging closing paragraph (<p> tag).
     """
 
     candidates = [
@@ -115,29 +115,70 @@ def generate_content(gemini_key, topic, niche):
 
     raise RuntimeError("All Gemini Flash models failed or returned invalid JSON.")
 
-def fetch_image(prompt_text, save_path, gen_w=768, gen_h=1152, final_w=1000, final_h=1500):
-    orientation = "wide horizontal framing" if gen_w > gen_h else "vertical 2:3 framing"
-    clean_prompt = f"{prompt_text}, architectural digest interior photography, warm natural light, cozy aesthetic, 8k photorealistic, {orientation}, no text"
-    encoded = requests.utils.quote(clean_prompt[:350])
+def fetch_image(prompt_text, save_path, gen_w=768, gen_h=1152, final_w=1000, final_h=1500, gemini_key=""):
+    is_wide = gen_w > gen_h
+    aspect = "16:9" if is_wide else "2:3"
+    orientation = "wide horizontal framing" if is_wide else "vertical 2:3 framing"
+    clean_prompt = f"{prompt_text}, architectural digest interior photography, warm natural light, cozy aesthetic, 8k photorealistic, {orientation}, no text, no watermarks"
 
-    for attempt in range(3):
+    # 1. Google Imagen 3 / Gemini Native Image API (Google Flow Engine)
+    if gemini_key:
+        client = genai.Client(api_key=gemini_key, http_options={"timeout": 45000})
+        for img_model in ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001"]:
+            try:
+                res = client.models.generate_images(
+                    model=img_model,
+                    prompt=clean_prompt,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                        aspect_ratio=aspect,
+                        output_mime_type="image/jpeg"
+                    )
+                )
+                if res.generated_images:
+                    img_bytes = res.generated_images[0].image.image_bytes
+                    img = Image.open(io.BytesIO(img_bytes)).convert("RGB").resize((final_w, final_h), Image.Resampling.LANCZOS)
+                    img.save(save_path, "JPEG", quality=92)
+                    print(f"  -> Google Imagen saved ({img_model}): {save_path}", flush=True)
+                    time.sleep(1.5)
+                    return True
+            except Exception as e:
+                print(f"  -> {img_model} skipped: {e}", flush=True)
+
+        for gem_img_model in ["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-2.0-flash-preview-image-generation"]:
+            try:
+                res = client.models.generate_content(
+                    model=gem_img_model,
+                    contents=clean_prompt,
+                    config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+                )
+                for part in (res.candidates[0].content.parts if res.candidates else []):
+                    if getattr(part, "inline_data", None) and part.inline_data.data:
+                        img = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB").resize((final_w, final_h), Image.Resampling.LANCZOS)
+                        img.save(save_path, "JPEG", quality=92)
+                        print(f"  -> Gemini Image saved ({gem_img_model}): {save_path}", flush=True)
+                        time.sleep(1.5)
+                        return True
+            except Exception as e:
+                print(f"  -> {gem_img_model} skipped: {e}", flush=True)
+
+    # 2. Backup Fallback (Pollinations) if Google image quota is reached
+    encoded = requests.utils.quote(clean_prompt[:350])
+    for attempt in range(2):
         seed = random.randint(1, 999999)
         img_url = f"https://image.pollinations.ai/prompt/{encoded}?width={gen_w}&height={gen_h}&nologo=true&seed={seed}"
         try:
-            resp = requests.get(img_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+            resp = requests.get(img_url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200 and len(resp.content) > 5000:
                 img = Image.open(io.BytesIO(resp.content)).convert("RGB").resize((final_w, final_h), Image.Resampling.LANCZOS)
                 img.save(save_path, "JPEG", quality=92)
-                print(f"  -> Image saved: {save_path}", flush=True)
+                print(f"  -> Fallback Image saved: {save_path}", flush=True)
                 time.sleep(2.5)
                 return True
-            else:
-                print(f"  -> Attempt {attempt+1} status {resp.status_code}, retrying...", flush=True)
-        except Exception as e:
-            print(f"  -> Attempt {attempt+1} error: {e}, retrying...", flush=True)
-        time.sleep(3)
+        except Exception:
+            time.sleep(2)
 
-    print(f"  -> Failed after 3 attempts: {save_path}", flush=True)
+    print(f"  -> Failed to generate image: {save_path}", flush=True)
     return False
 
 def wrap_text(text, font, max_width, draw):
@@ -260,14 +301,14 @@ def create_editorial_pin(clean_img_path, headline, pin_save_path, style_index):
             y += 72
         canvas.save(pin_save_path, "JPEG", quality=93)
 
-def build_blog_and_pins(data, slug, repo_owner, repo_name):
+def build_blog_and_pins(data, slug, repo_owner, repo_name, gemini_key=""):
     html_parts = []
 
     print("Generating Blog Hero Image...", flush=True)
     hero_file = f"blog_images/{slug}_hero.jpg"
     hero_ok = False
     if data.get("hero_image_prompt"):
-        hero_ok = fetch_image(data["hero_image_prompt"], hero_file, 1024, 576, 1200, 675)
+        hero_ok = fetch_image(data["hero_image_prompt"], hero_file, 1024, 576, 1200, 675, gemini_key)
     if hero_ok:
         hero_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{hero_file}"
         html_parts.append(
@@ -285,7 +326,7 @@ def build_blog_and_pins(data, slug, repo_owner, repo_name):
         html_parts.append(f"<h2>{sec['heading']}</h2>")
 
         clean_img_file = f"blog_images/{slug}_sec_{idx}.jpg"
-        img_ok = fetch_image(sec["image_prompt"], clean_img_file, 768, 1152, 1000, 1500)
+        img_ok = fetch_image(sec["image_prompt"], clean_img_file, 768, 1152, 1000, 1500, gemini_key)
 
         if img_ok:
             clean_img_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{clean_img_file}"
@@ -430,7 +471,7 @@ if __name__ == "__main__":
             print(f"Generating content for topic: {topic}", flush=True)
             data = generate_content(gemini_key, topic, niche)
             slug = f"post_{int(time.time())}"
-            full_html, generated_pins = build_blog_and_pins(data, slug, repo_owner, repo_name)
+            full_html, generated_pins = build_blog_and_pins(data, slug, repo_owner, repo_name, gemini_key)
             blog_url = publish_blogger(blogger_creds, blog_id, data["blog_title"], full_html)
             save_to_queue(generated_pins, blog_url, gap_hours)
 
