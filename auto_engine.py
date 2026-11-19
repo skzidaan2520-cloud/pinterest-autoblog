@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
+from google.genai import types
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -35,7 +36,7 @@ def generate_content(gemini_key, topic, niche):
 
     Match the exact number of sections to the number mentioned in "{topic}" (if no number is mentioned, generate 10 sections).
 
-    Return ONLY a valid JSON object (no markdown backticks) with these exact keys:
+    Return ONLY a valid JSON object with these exact keys:
     1. "blog_title": Catchy SEO listicle title for USA audience.
     2. "hero_image_prompt": Wide editorial interior photography prompt (no text, no words) capturing the overall aesthetic of '{topic}'.
     3. "intro_html": Engaging 2-paragraph HTML introduction (<p> tags only).
@@ -49,55 +50,35 @@ def generate_content(gemini_key, topic, niche):
     5. "conclusion_html": Short encouraging closing paragraph (<p> tag).
     """
 
-    response = None
     candidates = [
-        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
         "gemini-3.8-flash",
-        "gemini-flash-latest",
-        "gemini-pro-latest"
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
     ]
+
     for m_name in candidates:
         try:
             print(f"Trying model: {m_name}...", flush=True)
-            response = client.models.generate_content(model=m_name, contents=prompt)
+            response = client.models.generate_content(
+                model=m_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.7
+                )
+            )
+            data = json.loads(response.text.strip())
             print(f"Success with model: {m_name}", flush=True)
-            break
+            return data
         except Exception as e:
             print(f"Skipped {m_name}: {e}", flush=True)
-            time.sleep(2)
+            time.sleep(1)
             continue
 
-    if not response:
-        available = [
-            m.name.replace("models/", "")
-            for m in client.models.list()
-            if "generateContent" in (m.supported_actions or [])
-            and "2.5" not in m.name
-            and "2.0" not in m.name
-            and "1.5" not in m.name
-            and "image" not in m.name
-            and "tts" not in m.name
-        ]
-        print(f"Available filtered models: {available}", flush=True)
-        for m_name in available:
-            try:
-                print(f"Trying fallback: {m_name}...", flush=True)
-                response = client.models.generate_content(model=m_name, contents=prompt)
-                print(f"Success with fallback: {m_name}", flush=True)
-                break
-            except Exception as e:
-                print(f"Skipped fallback {m_name}: {e}", flush=True)
-                continue
-
-    if not response:
-        raise RuntimeError("No working Gemini model responded within timeout.")
-
-    raw = response.text.strip()
-    if raw.startswith("```json"):
-        raw = raw[7:-3].strip()
-    elif raw.startswith("```"):
-        raw = raw[3:-3].strip()
-    return json.loads(raw)
+    raise RuntimeError("All Gemini Flash models failed or returned invalid JSON.")
 
 def fetch_image(prompt_text, save_path, width=1000, height=1500):
     orientation = "wide horizontal framing" if width > height else "vertical 2:3 framing"
