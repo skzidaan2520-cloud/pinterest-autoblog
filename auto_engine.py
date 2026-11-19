@@ -28,7 +28,7 @@ def get_next_topic():
     return topic
 
 def generate_content(gemini_key, topic, niche):
-    client = genai.Client(api_key=gemini_key)
+    client = genai.Client(api_key=gemini_key, http_options={"timeout": 35000})
     prompt = f"""
     You are a viral Tier-1 (USA/UK) Pinterest & SEO Home Decor Blogger in the '{niche}' niche.
     Topic: "{topic}"
@@ -51,19 +51,20 @@ def generate_content(gemini_key, topic, niche):
 
     response = None
     candidates = [
-        "gemini-3.8-flash",
-        "models/gemini-3.8-flash",
         "gemini-3.5-flash",
+        "gemini-3.8-flash",
         "gemini-flash-latest",
         "gemini-pro-latest"
     ]
     for m_name in candidates:
         try:
+            print(f"Trying model: {m_name}...", flush=True)
             response = client.models.generate_content(model=m_name, contents=prompt)
-            print(f"Used model: {m_name}", flush=True)
+            print(f"Success with model: {m_name}", flush=True)
             break
         except Exception as e:
             print(f"Skipped {m_name}: {e}", flush=True)
+            time.sleep(2)
             continue
 
     if not response:
@@ -74,19 +75,22 @@ def generate_content(gemini_key, topic, niche):
             and "2.5" not in m.name
             and "2.0" not in m.name
             and "1.5" not in m.name
+            and "image" not in m.name
+            and "tts" not in m.name
         ]
         print(f"Available filtered models: {available}", flush=True)
         for m_name in available:
             try:
+                print(f"Trying fallback: {m_name}...", flush=True)
                 response = client.models.generate_content(model=m_name, contents=prompt)
-                print(f"Used fallback model: {m_name}", flush=True)
+                print(f"Success with fallback: {m_name}", flush=True)
                 break
             except Exception as e:
                 print(f"Skipped fallback {m_name}: {e}", flush=True)
                 continue
 
     if not response:
-        raise RuntimeError("No working Gemini model found for this API key.")
+        raise RuntimeError("No working Gemini model responded within timeout.")
 
     raw = response.text.strip()
     if raw.startswith("```json"):
@@ -103,7 +107,7 @@ def fetch_image(prompt_text, save_path, width=1000, height=1500):
     img_url = f"https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&nologo=true&seed={random.randint(1,99999)}"
     for attempt in range(2):
         try:
-            resp = requests.get(img_url, timeout=20)
+            resp = requests.get(img_url, timeout=18)
             if resp.status_code == 200 and len(resp.content) > 8000:
                 img = Image.open(io.BytesIO(resp.content)).convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
                 img.save(save_path, "JPEG", quality=92)
