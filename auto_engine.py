@@ -104,21 +104,29 @@ def generate_content(gemini_key, topic, niche):
 
     raise RuntimeError("All Gemini Flash models failed or returned invalid JSON.")
 
-def fetch_image(prompt_text, save_path, width=1000, height=1500):
-    orientation = "wide horizontal framing" if width > height else "vertical 2:3 framing"
-    encoded = requests.utils.quote(
-        f"{prompt_text}, architectural digest interior photography, warm natural light, cozy aesthetic, 8k photorealistic, {orientation}, no text"
-    )
-    img_url = f"https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&nologo=true&seed={random.randint(1,99999)}"
-    for attempt in range(2):
+def fetch_image(prompt_text, save_path, gen_w=768, gen_h=1152, final_w=1000, final_h=1500):
+    orientation = "wide horizontal framing" if gen_w > gen_h else "vertical 2:3 framing"
+    clean_prompt = f"{prompt_text}, architectural digest interior photography, warm natural light, cozy aesthetic, 8k photorealistic, {orientation}, no text"
+    encoded = requests.utils.quote(clean_prompt[:350])
+
+    for attempt in range(3):
+        seed = random.randint(1, 999999)
+        img_url = f"https://image.pollinations.ai/prompt/{encoded}?width={gen_w}&height={gen_h}&nologo=true&seed={seed}"
         try:
-            resp = requests.get(img_url, timeout=18)
-            if resp.status_code == 200 and len(resp.content) > 8000:
-                img = Image.open(io.BytesIO(resp.content)).convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+            resp = requests.get(img_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code == 200 and len(resp.content) > 5000:
+                img = Image.open(io.BytesIO(resp.content)).convert("RGB").resize((final_w, final_h), Image.Resampling.LANCZOS)
                 img.save(save_path, "JPEG", quality=92)
+                print(f"  -> Image saved: {save_path}", flush=True)
+                time.sleep(2.5)
                 return True
-        except Exception:
-            time.sleep(1)
+            else:
+                print(f"  -> Attempt {attempt+1} status {resp.status_code}, retrying...", flush=True)
+        except Exception as e:
+            print(f"  -> Attempt {attempt+1} error: {e}, retrying...", flush=True)
+        time.sleep(3)
+
+    print(f"  -> Failed after 3 attempts: {save_path}", flush=True)
     return False
 
 def wrap_text(text, font, max_width, draw):
@@ -246,7 +254,10 @@ def build_blog_and_pins(data, slug, repo_owner, repo_name):
 
     print("Generating Blog Hero Image...", flush=True)
     hero_file = f"blog_images/{slug}_hero.jpg"
-    if data.get("hero_image_prompt") and fetch_image(data["hero_image_prompt"], hero_file, 1200, 675):
+    hero_ok = False
+    if data.get("hero_image_prompt"):
+        hero_ok = fetch_image(data["hero_image_prompt"], hero_file, 1024, 576, 1200, 675)
+    if hero_ok:
         hero_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{hero_file}"
         html_parts.append(
             f'<div style="margin:20px 0;text-align:center;">'
@@ -263,7 +274,7 @@ def build_blog_and_pins(data, slug, repo_owner, repo_name):
         html_parts.append(f"<h2>{sec['heading']}</h2>")
 
         clean_img_file = f"blog_images/{slug}_sec_{idx}.jpg"
-        img_ok = fetch_image(sec["image_prompt"], clean_img_file, 1000, 1500)
+        img_ok = fetch_image(sec["image_prompt"], clean_img_file, 768, 1152, 1000, 1500)
 
         if img_ok:
             clean_img_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{clean_img_file}"
@@ -273,8 +284,10 @@ def build_blog_and_pins(data, slug, repo_owner, repo_name):
                 f'</div>'
             )
 
+        pin_source = clean_img_file if img_ok else (hero_file if hero_ok else None)
+        if pin_source:
             pin_file = f"pins/{slug}_pin_{idx}.jpg"
-            create_editorial_pin(clean_img_file, sec["pin_headline"], pin_file, idx - 1)
+            create_editorial_pin(pin_source, sec["pin_headline"], pin_file, idx - 1)
             generated_pins.append({
                 "pin_title": sec["pin_title"],
                 "pin_description": sec["pin_description"],
@@ -401,7 +414,6 @@ if __name__ == "__main__":
     if gemini_key:
         topic = peek_next_topic()
         if topic:
-            # Step 1: Verify Blogger auth FIRST before spending time generating anything!
             blogger_creds = verify_blogger_auth(blogger_token, client_id, client_secret, refresh_token, blog_id)
 
             print(f"Generating content for topic: {topic}", flush=True)
@@ -411,7 +423,6 @@ if __name__ == "__main__":
             blog_url = publish_blogger(blogger_creds, blog_id, data["blog_title"], full_html)
             save_to_queue(generated_pins, blog_url, gap_hours)
 
-            # Remove topic ONLY after successful publish
             remove_completed_topic(topic)
             print(f"Blog published & {len(generated_pins)} editorial pins queued: {blog_url}", flush=True)
         else:
