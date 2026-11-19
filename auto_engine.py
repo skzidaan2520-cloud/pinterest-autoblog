@@ -50,13 +50,20 @@ def generate_content(gemini_key, topic, niche):
     """
 
     response = None
-    candidates = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+    candidates = [
+        "gemini-3.8-flash",
+        "models/gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-pro-latest"
+    ]
     for m_name in candidates:
         try:
             response = client.models.generate_content(model=m_name, contents=prompt)
             print(f"Used model: {m_name}", flush=True)
             break
-        except Exception:
+        except Exception as e:
+            print(f"Skipped {m_name}: {e}", flush=True)
             continue
 
     if not response:
@@ -64,8 +71,22 @@ def generate_content(gemini_key, topic, niche):
             m.name.replace("models/", "")
             for m in client.models.list()
             if "generateContent" in (m.supported_actions or [])
+            and "2.5" not in m.name
+            and "2.0" not in m.name
+            and "1.5" not in m.name
         ]
-        response = client.models.generate_content(model=available[0], contents=prompt)
+        print(f"Available filtered models: {available}", flush=True)
+        for m_name in available:
+            try:
+                response = client.models.generate_content(model=m_name, contents=prompt)
+                print(f"Used fallback model: {m_name}", flush=True)
+                break
+            except Exception as e:
+                print(f"Skipped fallback {m_name}: {e}", flush=True)
+                continue
+
+    if not response:
+        raise RuntimeError("No working Gemini model found for this API key.")
 
     raw = response.text.strip()
     if raw.startswith("```json"):
