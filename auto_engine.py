@@ -48,7 +48,7 @@ def generate_content(gemini_key, topic, niche):
        - "pin_title": SEO Pinterest title (max 90 chars).
        - "pin_description": Engaging Pinterest description with 4 relevant hashtags (max 300 chars).
     """
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.0-flash", contents=prompt)
     raw = response.text.strip()
     if raw.startswith("```json"):
         raw = raw[7:-3].strip()
